@@ -1,0 +1,36 @@
+framework:
+  - terraform
+skip-check:
+  # Public ALB must accept 80 from the internet; the service-SG hit is a false positive (source is the ALB SG, not 0.0.0.0/0).
+  - CKV_AWS_260
+  # Module defaults deletion protection to true; only the throwaway example turns it off so destroy works.
+  - CKV_AWS_150
+  # KMS key policies attach to one key, so Resource "*" means "this key"; service statements are condition-scoped.
+  - CKV_AWS_109
+  - CKV_AWS_111
+  - CKV_AWS_356
+  # Log retention is a variable (30-day default keeps demo cost low); raise to 365+ for regulated workloads.
+  - CKV_AWS_338
+  # AZ list is sliced to az_count, so a newly added zone cannot change subnet placement.
+  - CKV_AWS_394
+  # ALB log bucket: it is itself the log sink, so server-access logging would recurse.
+  - CKV_AWS_18
+  # ALB log bucket: replicating disposable access logs cross-region doubles cost for no recovery value.
+  - CKV_AWS_144
+  # ALB log bucket: ELB log delivery only supports SSE-S3, SSE-KMS breaks delivery.
+  - CKV_AWS_145
+  # ALB log bucket: nothing consumes object events; add when shipping logs to a SIEM.
+  - CKV2_AWS_62
+  # Minimal internal network; flow logs are implemented in terraform-aws-vpc-foundation.
+  - CKV2_AWS_11
+  # WAF is an optional toggle; WAF logging is on the roadmap (needs an aws-waf-logs-* destination).
+  - CKV2_AWS_31
+  # WAF is optional; when enabled it includes AWSManagedRulesKnownBadInputsRuleSet (Log4j coverage).
+  - CKV2_AWS_76
+  # Service SG is attached to the ECS service in another module; checkov cannot follow the module output.
+  - CKV2_AWS_5
+  # TLS terminates at the ALB; ALB-to-task traffic stays inside private subnets on HTTP.
+  - CKV_AWS_378
+  # Port-80 listener only forwards in documented demo mode (no certificate); with certificate_arn it redirects to HTTPS on TLS 1.2+.
+  - CKV_AWS_103
+  - CKV2_AWS_20

@@ -1,0 +1,31 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is git-ignored.
+
+region      = "eu-west-2"
+name        = "webapp"
+environment = "dev"
+
+# Stock image (default). Runs as the image's own user with a writable root filesystem.
+container_image = "public.ecr.aws/docker/library/nginx:stable-alpine"
+container_port  = 80
+
+# Hardened path once the app/ image is pushed to the ECR repository output:
+# container_image          = "123456789012.dkr.ecr.eu-west-2.amazonaws.com/webapp-dev:3f2c1ab"
+# container_port           = 8080
+# container_user           = "101"
+# readonly_root_filesystem = true
+# writable_paths           = ["/tmp"]
+
+# HTTPS: supply an ACM certificate in eu-west-2 and port 80 becomes a redirect.
+# certificate_arn = "arn:aws:acm:eu-west-2:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+# Restrict who can reach the ALB, e.g. an office range during testing.
+allowed_cidrs = ["0.0.0.0/0"]
+
+enable_waf          = false
+fargate_weight      = 1
+fargate_spot_weight = 1
+create_alarm_topic  = true
+
+# secrets = [
+#   { name = "DB_PASSWORD", value_from = "arn:aws:ssm:eu-west-2:123456789012:parameter/webapp/dev/db-password" },
+# ]

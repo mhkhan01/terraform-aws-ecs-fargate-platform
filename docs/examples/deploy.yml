@@ -1,0 +1,107 @@
+# EXAMPLE ONLY - deliberately not in .github/workflows so it never runs in this repo.
+#
+# Copy to .github/workflows/deploy.yml in an application repo once you have:
+#   1. A remote state backend for examples/complete (see terraform-aws-state-bootstrap).
+#   2. An IAM role trusted by GitHub OIDC (no long-lived keys), scoped to this repo and
+#      the "production" environment, with permission to push to the ECR repository and
+#      run terraform apply for this stack.
+#   3. Repository variables: AWS_ROLE_ARN, ECR_REPOSITORY_URL (from the ecr_repository_url output).
+#
+# Flow: build -> scan -> push an immutable tag (git SHA) -> terraform apply with that tag.
+# Terraform stays the single owner of the task definition, so there is no drift between
+# what the pipeline deployed and what the state file thinks is running.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for GitHub OIDC -> AWS
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-2
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - id: meta
+        run: echo "image=${{ vars.ECR_REPOSITORY_URL }}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: docker build -t "${{ steps.meta.outputs.image }}" app/
+
+      # Fail fast on critical CVEs before the image ever reaches the registry.
+      - name: Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      # Tags are immutable in ECR, so re-running for the same SHA fails loudly instead of overwriting.
+      - name: Push
+        run: docker push "${{ steps.meta.outputs.image }}"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production # add required reviewers on this environment for a manual gate
+    defaults:
+      run:
+        working-directory: examples/complete
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.5
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init -input=false
+
+      - name: Plan
+        run: |
+          terraform plan -input=false -out=tfplan \
+            -var "container_image=${{ needs.build-and-push.outputs.image }}" \
+            -var "container_port=8080" \
+            -var "container_user=101" \
+            -var "readonly_root_filesystem=true" \
+            -var 'writable_paths=["/tmp"]'
+
+      - name: Apply
+        run: terraform apply -input=false tfplan
+
+      # The circuit breaker rolls back a bad deploy; this step makes the pipeline wait and report it.
+      - name: Wait for steady state
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$(terraform output -raw cluster_name)" \
+            --services "$(terraform output -raw service_name)"
